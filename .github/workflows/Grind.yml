@@ -1,0 +1,133 @@
+name: Grind
+
+on:
+  workflow_dispatch:
+    inputs:
+      app_name:
+        description: "App name"
+        required: true
+        default: "Grind"
+        type: string
+      app_version:
+        description: "App version (versionName, e.g. 1.0.0)"
+        required: true
+        default: "1.0.0"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      APP_NAME: ${{ github.event.inputs.app_name || 'Grind' }}
+      APP_VERSION: ${{ github.event.inputs.app_version || '1.0.0' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.7"
+
+      - name: Patch app name and version
+        run: |
+          python3 - <<'PY'
+          import os, re
+          from xml.sax.saxutils import escape
+
+          name = os.environ["APP_NAME"].strip() or "Grind"
+          version = os.environ["APP_VERSION"].strip() or "1.0.0"
+          run_number = int(os.environ.get("GITHUB_RUN_NUMBER", "1"))
+
+          # versionCode: major*10000 + minor*100 + patch, fallback to run number
+          m = re.match(r"^(\d+)\.(\d+)\.(\d+)", version)
+          code = int(m.group(1)) * 10000 + int(m.group(2)) * 100 + int(m.group(3)) if m else run_number
+          code = max(code, 1)
+
+          # --- AndroidManifest.xml: android:label ---
+          manifest = "app/src/main/AndroidManifest.xml"
+          with open(manifest, "r", encoding="utf-8") as f:
+              text = f.read()
+          safe_name = escape(name, {'"': "&quot;"})
+          text, n = re.subn(r'android:label="[^"]*"', lambda _: 'android:label="%s"' % safe_name, text, count=1)
+          if n == 0:
+              raise SystemExit("android:label not found in AndroidManifest.xml")
+          with open(manifest, "w", encoding="utf-8") as f:
+              f.write(text)
+
+          # --- app/build.gradle.kts: versionName / versionCode ---
+          gradle = "app/build.gradle.kts"
+          with open(gradle, "r", encoding="utf-8") as f:
+              text = f.read()
+          safe_version = version.replace("\\", "\\\\").replace('"', '\\"')
+          text, n1 = re.subn(r'versionName\s*=\s*"[^"]*"', lambda _: 'versionName = "%s"' % safe_version, text, count=1)
+          text, n2 = re.subn(r'versionCode\s*=\s*\d+', lambda _: 'versionCode = %d' % code, text, count=1)
+          if n1 == 0 or n2 == 0:
+              raise SystemExit("versionName/versionCode not found in app/build.gradle.kts")
+          with open(gradle, "w", encoding="utf-8") as f:
+              f.write(text)
+
+          print("Patched -> name=%s versionName=%s versionCode=%d" % (name, version, code))
+          PY
+
+      - name: Inject custom icon (if build-icon.png exists)
+        run: |
+          if [ -f build-icon.png ]; then
+            echo "build-icon.png found - injecting launcher icons"
+            pip install --quiet pillow
+            python3 - <<'PY'
+          import os
+          from PIL import Image, ImageDraw
+
+          sizes = {"mdpi": 48, "hdpi": 72, "xhdpi": 96, "xxhdpi": 144, "xxxhdpi": 192}
+          src = Image.open("build-icon.png").convert("RGBA")
+
+          # make it square (center crop)
+          w, h = src.size
+          s = min(w, h)
+          src = src.crop(((w - s) // 2, (h - s) // 2, (w - s) // 2 + s, (h - s) // 2 + s))
+
+          res = "app/src/main/res"
+          for density, px in sizes.items():
+              d = os.path.join(res, "mipmap-" + density)
+              os.makedirs(d, exist_ok=True)
+              icon = src.resize((px, px), Image.LANCZOS)
+              icon.save(os.path.join(d, "ic_launcher.png"))
+
+              # round variant
+              mask = Image.new("L", (px * 4, px * 4), 0)
+              ImageDraw.Draw(mask).ellipse((0, 0, px * 4 - 1, px * 4 - 1), fill=255)
+              mask = mask.resize((px, px), Image.LANCZOS)
+              round_icon = Image.new("RGBA", (px, px), (0, 0, 0, 0))
+              round_icon.paste(icon, (0, 0), mask)
+              round_icon.save(os.path.join(d, "ic_launcher_round.png"))
+
+          # Remove adaptive icon XMLs so the injected PNGs are actually used on API 26+
+          for n in ("ic_launcher.xml", "ic_launcher_round.xml"):
+              p = os.path.join(res, "mipmap-anydpi-v26", n)
+              if os.path.exists(p):
+                  os.remove(p)
+          print("Icons injected")
+          PY
+          else
+            echo "build-icon.png not found - keeping default icon"
+          fi
+
+      - name: Build debug APK
+        run: gradle assembleDebug --no-daemon
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ github.event.inputs.app_name || 'Grind' }}
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
