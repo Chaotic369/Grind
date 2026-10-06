@@ -36,22 +36,28 @@ object QuoteRepository {
         null
     }
 
-    private fun fetchZen(): Quote? = try {
-        val body = get("https://zenquotes.io/api/random") ?: return null
-        val o = JSONArray(body).getJSONObject(0)
-        val t = o.getString("q").trim()
-        val a = o.getString("a").trim()
-        if (a.equals("Zen Quotes", true) || t.contains("Too many requests", true)) null else Quote(t, a)
-    } catch (e: Exception) {
-        null
+    private fun fetchZen(): Quote? {
+        return try {
+            val body = get("https://zenquotes.io/api/random") ?: return null
+            val o = JSONArray(body).getJSONObject(0)
+            val t = o.getString("q").trim()
+            val a = o.getString("a").trim()
+            if (a.equals("Zen Quotes", true) || t.contains("Too many requests", true)) null
+            else Quote(t, a)
+        } catch (e: Exception) {
+            null
+        }
     }
 
-    private fun fetchQuotable(): Quote? = try {
-        val body = get("https://api.quotable.io/random?tags=inspirational|success|wisdom") ?: return null
-        val o = JSONObject(body)
-        Quote(o.getString("content").trim(), o.getString("author").trim())
-    } catch (e: Exception) {
-        null
+    private fun fetchQuotable(): Quote? {
+        return try {
+            val body = get("https://api.quotable.io/random?tags=inspirational|success|wisdom")
+                ?: return null
+            val o = JSONObject(body)
+            Quote(o.getString("content").trim(), o.getString("author").trim())
+        } catch (e: Exception) {
+            null
+        }
     }
 
     private fun local(avoid: Quote?): Quote {
