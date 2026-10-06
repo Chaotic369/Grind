@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Grind</string>
+    <string name="new_quote">New quote</string>
+    <string name="channel_name">Daily motivation</string>
+    <string name="channel_desc">Motivational quotes to keep you grinding</string>
+    <string name="widget_description">Motivational quote. Tap to get a new one.</string>
+</resources>
